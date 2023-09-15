@@ -21,11 +21,8 @@ set -e
 type curl >/dev/null || die "Please install curl and then try again."
 type jq >/dev/null || die "Please install jq and then try again."
 
-PASS_TYPE=password
-[[ $1 == --token ]] && PASS_TYPE=token
-
 read -p "[?] Please enter your AzireVPN username: " -r USER
-read -p "[?] Please enter your AzireVPN $PASS_TYPE: " -rs PASS
+read -p "[?] Please enter your AzireVPN password: " -rs PASS
 echo
 
 declare -A SERVER_ENDPOINTS
@@ -36,8 +33,8 @@ PRIVATE_KEY=""
 
 echo "[+] Contacting AzireVPN API for server locations."
 RESPONSE="$(curl -LsS https://api.azirevpn.com/v2/locations)" || die "Unable to connect to AzireVPN API."
-FIELDS="$(jq -r '.locations[]| .name,.city,.country,.iso,.pool,.pubkey' <<<"$RESPONSE")" || die "Unable to parse response."
-while read -r CODE && read -r CITY && read -r COUNTRY && read -r ISO && read -r POOL && read -r PUBKEY; do
+FIELDS="$(jq -r '.locations[]| .name,.city,.country,.pool,.pubkey' <<<"$RESPONSE")" || die "Unable to parse response."
+while read -r CODE && read -r CITY && read -r COUNTRY && read -r POOL && read -r PUBKEY; do
 	SERVER_CODES+=( "$CODE" )
 	SERVER_LOCATIONS["$CODE"]="$CITY, $COUNTRY"
 	SERVER_ENDPOINTS["$CODE"]="$POOL"
@@ -45,7 +42,7 @@ while read -r CODE && read -r CITY && read -r COUNTRY && read -r ISO && read -r 
 	CONFIGURATION_FILE="/etc/wireguard/azirevpn-$CODE.conf"
 
 	shopt -s nocasematch
-	if [ -f $CONFIGURATION_FILE ] && [ -z $PRIVATE_KEY ]; then
+	if [ -f "$CONFIGURATION_FILE" ] && [ -z "$PRIVATE_KEY" ]; then
 		while read -r line; do
 			[[ $line =~ ^PrivateKey[[:space:]]*=[[:space:]]*([a-zA-Z0-9+/]{43}=)[[:space:]]*$ ]] && PRIVATE_KEY="${BASH_REMATCH[1]}" && break
 		done < "$CONFIGURATION_FILE"
@@ -61,7 +58,7 @@ else
 fi
 
 echo "[+] Contacting AzireVPN API for key registration."
-RESPONSE="$(curl -LsS -d username="$USER" --data-urlencode "$PASS_TYPE=$PASS" --data-urlencode key="$(wg pubkey <<<"$PRIVATE_KEY")" "https://api.azirevpn.com/v2/ip/add")" || die "Unable to connect to AzireVPN API."
+RESPONSE="$(curl -LsS -d username="$USER" --data-urlencode "password=$PASS" --data-urlencode key="$(wg pubkey <<<"$PRIVATE_KEY")" "https://api.azirevpn.com/v2/ip/add")" || die "Unable to connect to AzireVPN API."
 FIELDS="$(jq -r '.status,.message' <<<"$RESPONSE")" || die "Unable to parse response."
 IFS=$'\n' read -r -d '' STATUS MESSAGE <<<"$FIELDS" || true
 if [[ $STATUS != success ]]; then
@@ -74,7 +71,7 @@ fi
 FIELDS="$(jq -r '.ipv4.address,.ipv6.address,.dns' <<<"$RESPONSE")" || die "Unable to parse response."
 IFS=$'\n' read -r -d '' IPV4_ADDRESS IPV6_ADDRESS DNS <<<"$FIELDS" || true
 
-DNS="$(echo $DNS | tr -d '[]"')"
+DNS="$(echo $DNS | tr -d '[]"' | xargs)"
 for CODE in "${SERVER_CODES[@]}"; do
 	CONFIGURATION_FILE="/etc/wireguard/azirevpn-$CODE.conf"
 	echo "[+] Writing WriteGuard configuration file to $CONFIGURATION_FILE."
